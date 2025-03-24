@@ -71,6 +71,7 @@ You can train the DP model through the following code:
 ```bash
 bash policy/Diffusion-Policy/train.sh ${task_name} ${load_num} ${agent_id} ${seed} ${gpu_id}
 # Example:
+bash policy/Diffusion-Policy/train.sh LiftBarrier-rf 150 0 100 0
 bash policy/Diffusion-Policy/train.sh LiftBarrier-rf 150 1 100 0
 ```
 ### Evaluation
