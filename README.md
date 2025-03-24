@@ -80,7 +80,7 @@ bash policy/Diffusion-Policy/eval_multi.sh ${config_name} ${DATA_NUM} ${CHECKPOI
 # Example
 bash policy/Diffusion-Policy/eval_multi.sh configs/table/lift_barrier.yaml 150 300 1 LiftBarrier-rf
 ```
-### BibTeX
+## BibTeX
 ```bibtex
 @article{qin2025robofactory,
   title={RoboFactory: Exploring Embodied Agent Collaboration with Compositional Constraints},
