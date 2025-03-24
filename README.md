@@ -81,6 +81,9 @@ bash policy/Diffusion-Policy/eval_multi.sh ${config_name} ${DATA_NUM} ${CHECKPOI
 # Example
 bash policy/Diffusion-Policy/eval_multi.sh configs/table/lift_barrier.yaml 150 300 1 LiftBarrier-rf
 ```
+## Community & Contact
+For any questions or research collaboration opportunities, please don't hesitate to reach out：yiranqin@link.cuhk.edu.cn, faceong02@gmail.com, akikaze@sjtu.edu.cn.
+
 ## BibTeX
 ```bibtex
 @article{qin2025robofactory,
