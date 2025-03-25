@@ -30,7 +30,7 @@ Now, try to run the task with just a line of code:
 ```bash
 python script/run_task.py configs/table/lift_barrier.yaml
 ```
-For more complex scene like RoboCasa, you can download them using the following commands. Note that if you use these scenes in your work please cite the scene dataset authors.
+For more complex scene like [RoboCasa](https://github.com/robocasa/robocasa), you can download them using the following commands. Note that if you use these scenes in your work please cite the scene dataset authors.
 ```bash
 python -m mani_skill.utils.download_asset RoboCasa
 ```
@@ -66,7 +66,7 @@ python script/parse_pkl_to_zarr_dp.py --task_name LiftBarrier-rf --load_num 150 
 python script/parse_pkl_to_zarr_dp.py --task_name LiftBarrier-rf --load_num 150 --agent_id 1
 ```
 ### Train
-We currently provide training code for Diffusion Policy (DP), and we plan to provide more Policy in the future.
+We currently provide training code for [Diffusion Policy](https://arxiv.org/pdf/2303.04137) (DP), and we plan to provide more policies in the future.
 You can train the DP model through the following code:
 ```bash
 bash policy/Diffusion-Policy/train.sh ${task_name} ${load_num} ${agent_id} ${seed} ${gpu_id}
