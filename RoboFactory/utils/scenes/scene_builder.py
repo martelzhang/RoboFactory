@@ -107,6 +107,10 @@ class RFSceneBuilder(SceneBuilder):
                 asset = getattr(self.env, primitive_cfg['name'], None)
                 if not asset:
                     raise AttributeError(f'Attribute "{primitive_cfg["name"]}" not found in SceneBuilder.')
+                ppos = primitive_cfg['pos']['ppos']['p']
+                if 'randp_scale' in primitive_cfg['pos']:
+                    ppos = np.array(ppos) + np.array(primitive_cfg['pos']['randp_scale']) * np.random.rand((len(ppos)))
+                    ppos = ppos.tolist()
                 qpos = np.array(primitive_cfg['pos']['qpos'])
                 if 'randq_scale' in primitive_cfg:
                     qpos = np.array(qpos) + np.array(primitive_cfg['pos']['randq_scale'])* np.random.rand((len(qpos)))
@@ -117,7 +121,7 @@ class RFSceneBuilder(SceneBuilder):
                         lock_y=primitive_cfg['pos']['random_quaternions'][1],
                         lock_z=primitive_cfg['pos']['random_quaternions'][2]
                     )
-                asset.set_pose(Pose.create_from_pq(primitive_cfg['pos']['ppos']['p'], qpos))
+                asset.set_pose(Pose.create_from_pq(ppos, qpos))
 
         # objects
         if 'objects' in self.cfg:
@@ -128,6 +132,9 @@ class RFSceneBuilder(SceneBuilder):
                 if not asset:
                     raise AttributeError(f'Attribute "{asset_cfg["name"]}" not found in SceneBuilder.')
                 ppos = asset_cfg['pos']['ppos']['p']
+                if 'randp_scale' in asset_cfg['pos']:
+                    ppos = np.array(ppos) + np.array(asset_cfg['pos']['randp_scale']) * np.random.rand((len(ppos)))
+                    ppos = ppos.tolist()
                 qpos = asset_cfg['pos']['qpos']
                 if 'randq_scale' in asset_cfg['pos']:
                     qpos = np.array(qpos) + np.array(asset_cfg['pos']['randq_scale'])* np.random.rand((len(qpos)))
