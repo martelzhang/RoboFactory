@@ -6,6 +6,7 @@ from tqdm import tqdm
 import os
 import pdb
 import pickle
+import argparse
 
 from mani_skill.utils.io_utils import load_json
 from mani_skill.utils import sapien_utils
@@ -161,50 +162,24 @@ class ManiSkillTrajectoryDataset(Dataset):
             len_of_success=len(self.success),
         )
         return res
-
-if __name__ == "__main__":
-    load_num = 10
-    dataset = ManiSkillTrajectoryDataset(dataset_file="/home/ubuntu/kl_workspace/data/StrikeCube.h5", load_count=load_num)
-    print("--DEBUG--")
-    tot = 0
-    camera_name = ['head_camera']
+    
+def main(load_num, task_name):
+    dataset = ManiSkillTrajectoryDataset(dataset_file=f"data/h5_data/{task_name}.h5", load_count=load_num)
+    print("--Successfully loading dataset--")
     for i in range(load_num):
         res = dataset.__getitem__(i)
-        if load_num < 10:
-            print(res.keys())
-            print(res["obs"].keys())
-            print("len of action", len(res["action"]))
-            # pdb.set_trace()
-            # print("action example", res["action"][0], res["action"][1], res["action"][2], res["action"][3], res["action"][4], res["action"][5])
-            # print("obs sensor param keys", res["obs"]["sensor_param"].keys())
-            # print("obs sensor base camera param keys", res["obs"]["sensor_param"]["base_camera"].keys())
-            # print("obs sensor base camera intrinsic", res["obs"]["sensor_param"]["base_camera"]["intrinsic_cv"][0])
-            # print("obs sensor base camera extrinsic", res["obs"]["sensor_param"]["base_camera"]["extrinsic_cv"][0])
-            # print("obs sensor base camera cam2world", res["obs"]["sensor_param"]["base_camera"]["cam2world_gl"][0])
-            # print("obs sensor data keys-data", res["obs"]["sensor_data"].keys())
-            # print("obs Camera_BEV sensor data keys-data", res["obs"]["sensor_data"]["Camera_BEV"].keys())
-            # print("obs sensor data keys-agent", res["obs"]["agent"].keys())
-            # print("obs sensor data keys-extra", res["obs"]["extra"].keys())
-            # print("obs Camera_BEV sensor data rgb size", res["obs"]["sensor_data"]["head_camera"]["rgb"].shape)
-            # print("obs Camera_BEV sensor data depth size", res["obs"]["sensor_data"]["Camera_BEV"]["depth"].shape)
-            # print("obs Camera_BEV sensor data depth example:", res["obs"]["sensor_data"]["Camera_BEV"]["depth"][0])
-            # print("obs Camera_BEV sensor data segmentation size", res["obs"]["sensor_data"]["Camera_BEV"]["segmentation"].shape)
-            # print("obs Camera_BEV sensor data segmentation th example:", res["obs"]["sensor_data"]["Camera_BEV"]["segmentation"][0])
-            # print("obs sensor data rgb length", len(res["obs"]["sensor_data"]["base_camera"]["rgb"]))
-            # tot += len(res["action"])
-            continue
-        # make .pkl file for every step
-        base_dir = "/home/ubuntu/kl_workspace/data/StrikeCube"
         # for every episode, make a dir to save the episode data
+        base_dir = f"data/pkl_data/{task_name}"
         episode_dir = f"{base_dir}/episode{i}"
         os.makedirs(episode_dir, exist_ok=True)
         for j in range(len(res["action"])):
             obs_dict = {}
-            obs_dict["head_camera"] = {}
-            obs_dict["head_camera"]["rgb"] = res["obs"]["sensor_data"]["head_camera"]["rgb"][j]
-            obs_dict["head_camera"]["intrinsic_cv"] = res["obs"]["sensor_param"]["head_camera"]["intrinsic_cv"][j]
-            obs_dict["head_camera"]["extrinsic_cv"] = res["obs"]["sensor_param"]["head_camera"]["extrinsic_cv"][j]
-            obs_dict["head_camera"]["cam2world_gl"] = res["obs"]["sensor_param"]["head_camera"]["cam2world_gl"][j]
+            camera_name = "head_camera"
+            obs_dict[camera_name] = {}
+            obs_dict[camera_name]["rgb"] = res["obs"]["sensor_data"][camera_name]["rgb"][j]
+            obs_dict[camera_name]["intrinsic_cv"] = res["obs"]["sensor_param"][camera_name]["intrinsic_cv"][j]
+            obs_dict[camera_name]["extrinsic_cv"] = res["obs"]["sensor_param"][camera_name]["extrinsic_cv"][j]
+            obs_dict[camera_name]["cam2world_gl"] = res["obs"]["sensor_param"][camera_name]["cam2world_gl"][j]
             step_data = dict(
                 pointcloud=None,
                 joint_action=res["action"][j],
@@ -213,4 +188,11 @@ if __name__ == "__main__":
             )
             with open(f"{episode_dir}/{j}.pkl", "wb") as f:
                 pickle.dump(step_data, f)
-    # print("total action length", tot)
+    
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task_name", type=str, required=True, help="Name of the task")
+    parser.add_argument("--load_num", type=int, required=True, help="Number of trajectories to load")
+    args = parser.parse_args()
+
+    main(args.load_num, args.task_name)
