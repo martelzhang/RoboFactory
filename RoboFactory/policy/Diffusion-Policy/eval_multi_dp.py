@@ -175,7 +175,7 @@ def main(args: Args):
     if record_dir:
         record_dir = record_dir.format(env_id=env_id)
         env = RecordEpisodeMA(env, record_dir, info_on_video=False, save_trajectory=False, max_steps_per_video=30000)
-
+    raw_obs, _ = env.reset(seed=args.seed)
     planner = PandaArmMotionPlanningSolver(
         env,
         debug=False,
@@ -192,7 +192,6 @@ def main(args: Args):
     for i in range(agent_num):
         dp_models.append(DP(env_id, args.checkpoint_num, args.data_num, id=i))
 
-    raw_obs, _ = env.reset(seed=args.seed)
     if args.seed is not None and env.action_space is not None:
         env.action_space.seed(args.seed[0])
     if args.render_mode is not None:
