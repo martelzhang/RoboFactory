@@ -1,9 +1,6 @@
 <div align="center">
 <h1>RoboFactory: Exploring Embodied Agent Collaboration with Compositional Constraints</h1>
 
-<a href="https://arxiv.org/pdf/2503.16408" target="_blank" rel="noopener noreferrer">
-  <img src="https://img.shields.io/badge/Paper-RoboFactory" alt="Paper PDF">
-</a>
 <a href="https://arxiv.org/abs/2503.16408"><img src="https://img.shields.io/badge/arxiv-2503.16408-b31b1b" alt="arXiv"></a>
 <a href="https://iranqin.github.io/robofactory/"><img src="https://img.shields.io/badge/Project_Page-green" alt="Project Page"></a>
 <a href='https://huggingface.co/datasets/FACEONG/RoboFactory_Dataset'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Datasets-blue'></a>
