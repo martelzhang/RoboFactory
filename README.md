@@ -10,14 +10,14 @@
 RoboFactory is a benchmark for embodied multi-agent manipulation, based on [ManiSkill](https://www.maniskill.ai/). Leveraging compositional constraints and specifically designed interfaces, it's an automated data collection framework for embodied multi-agent systems.
 
 ## 🚀 Quick Start
-First, clone this repository to your local machine, and install the dependencies.
+First, clone this repository to your local machine, and install [vulkan](https://maniskill.readthedocs.io/en/latest/user_guide/getting_started/installation.html#vulkan) and the following dependencies.
 ```bash
 git clone git@github.com:MARS-EAI/RoboFactory.git
 conda create -n RoboFactory python=3.9
 conda activate RoboFactory
 cd RoboFactory
 pip install -r requirements.txt
-conda install -c conda-forge networkx=2.5
+# (optional): conda install -c conda-forge networkx=2.5
 ```
 Then download the 3D assets in RoboFactory task:
 ```bash
