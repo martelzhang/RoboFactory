@@ -45,7 +45,6 @@ class PandaArmMotionPlanningSolver:
 
         self.robot = [agent.robot for agent in self.env_agent]
         self.base_pose = [base_pose, ] if not isinstance(base_pose, list) else base_pose  
-        # Assume all agents have the same control mode and joint limits
         self.control_mode = self.env_agent[0].control_mode
         self.joint_vel_limits = joint_vel_limits
         self.joint_acc_limits = joint_acc_limits
@@ -97,50 +96,131 @@ class PandaArmMotionPlanningSolver:
             planner.set_base_pose(np.hstack([self.base_pose[id].p, self.base_pose[id].q]))
             planner_group.append(planner)
         return planner_group
-                    
+
+    def convert_joint_to_ee(self, joint_trajectory: np.ndarray, agent_id: int = 0) -> np.ndarray:
+        """
+        Converts a joint space trajectory to an end-effector pose trajectory.
+        
+        Args:
+            joint_trajectory (np.ndarray): The joint position trajectory, shape (N, D_joint).
+            agent_id (int): The ID of the agent/planner to use for the conversion.
+
+        Returns:
+            np.ndarray: The end-effector pose trajectory, shape (N, 7), where each row is [px, py, pz, qw, qx, qy, qz].
+        """
+        planner = self.planner[agent_id]
+        ee_trajectory = []
+        pinocchio_model = planner.pinocchio_model
+        move_group_link_id = planner.move_group_link_id
+        full_qpos = planner.robot.get_qpos() 
+
+        for qpos_step in joint_trajectory:
+            full_qpos[:len(qpos_step)] = qpos_step
+            pinocchio_model.compute_forward_kinematics(full_qpos)
+            ee_pose_or_array = pinocchio_model.get_link_pose(move_group_link_id)
+            if isinstance(ee_pose_or_array, sapien.Pose):
+                ee_pose_np = np.hstack([ee_pose_or_array.p, ee_pose_or_array.q])
+            elif isinstance(ee_pose_or_array, np.ndarray):
+                ee_pose_np = ee_pose_or_array
+            else:
+                raise TypeError(f"Unexpected type returned by get_link_pose: {type(ee_pose_or_array)}")
+            ee_trajectory.append(ee_pose_np)
+     
+        return np.array(ee_trajectory)
+
+    def extract_pos_quat(self, sapien_pose):
+        pos_arr = np.asarray(sapien_pose.p)
+        pos = pos_arr[0] if pos_arr.ndim == 2 and pos_arr.shape[0] == 1 else pos_arr
+        quat_arr = np.asarray(sapien_pose.q)
+        quat_wxyz = quat_arr[0] if quat_arr.ndim == 2 and quat_arr.shape[0] == 1 else quat_arr
+        if quat_wxyz.shape[0] != 4:
+            raise ValueError(f"Expected quaternion of length 4, but got shape {quat_wxyz.shape}")
+        return pos, quat_wxyz
+
+    def get_ee_action_from_pose(self, pose: Union[np.ndarray, sapien.Pose], gripper_state: int) -> np.ndarray:
+        """
+        Converts a pose (and gripper state) into the required format for the 'ee_pose' controller.
+        
+        Args:
+            pose: A 7D numpy array [px,py,pz,qw,qx,qy,qz] or a sapien.Pose object.
+            gripper_state: The desired gripper state (OPEN or CLOSED).
+            
+        Returns:
+            A (1, 7) numpy array for the environment step function: [px,py,pz,roll,pitch,yaw,gripper].
+        """
+        if isinstance(pose, sapien.Pose):
+            pos, quat_wxyz = self.extract_pos_quat(pose)
+        else: # Assumes np.ndarray of shape (7,)
+            pos = pose[:3]
+            quat_wxyz = pose[3:7]
+        roll, pitch, yaw = quat2euler(quat_wxyz, axes='sxyz')
+        action_vec = np.hstack([pos, roll, pitch, yaw, gripper_state])
+        return action_vec.reshape(1, -1)
+
+    def get_current_ee_pose_array(self, agent_id: int = 0) -> np.ndarray:
+        """
+        From current robot joints pose, calculate EE pose: numpy array [px,py,pz,qw,qx,qy,qz]。
+        """
+        # get qpos
+        full_qpos = self.robot[agent_id].get_qpos().cpu().numpy()[0]
+        arm_joints = full_qpos[:7]
+        ee_traj = self.convert_joint_to_ee(np.array([arm_joints]), agent_id=agent_id)
+        return ee_traj[0] 
+
     def follow_path(self, result_group, move_id, refine_steps: int = 0):
         n_step = 0
-        for i in range(len(result_group)):
-            n_step = max(n_step, result_group[i]["position"].shape[0])
-        # Multi-Agent check collision
-        # if check_collision(self, result_group, move_id, n_step, jump):
-        #     print("Collision detected")
-        #     return False
-        for i in range(n_step + refine_steps):
+        for r in result_group:
+            n_step = max(n_step, r["position"].shape[0])
+
+        planned_ee_trajectories = {}
+
+        if self.control_mode == "pd_ee_pose":
+            print("Using EE control mode. Converting joint trajectories to EE pose trajectories.")
+            for idx, agent_id in enumerate(move_id):
+                joint_traj = result_group[idx]["position"]
+                ee_traj = self.convert_joint_to_ee(joint_traj, agent_id=agent_id)
+                planned_ee_trajectories[agent_id] = ee_traj
+
+        for step in range(n_step + refine_steps):
             if not self.is_multi_agent:
-                qpos = result_group[0]["position"][min(i, n_step - 1)]
-                if self.control_mode == "pd_joint_pos_vel":
-                    qvel = result_group[0]["velocity"][min(i, n_step - 1)]
-                    action = np.hstack([qpos, qvel, self.gripper_state])
+                agent_id = move_id[0]
+                if self.control_mode == "pd_ee_pose":
+                    ee_traj = planned_ee_trajectories[agent_id]
+                    idx = min(step, len(ee_traj) - 1)
+                    target_ee_pose = ee_traj[idx]  # 7-dim numpy array
+                    action = self.get_ee_action_from_pose(target_ee_pose, self.gripper_state[agent_id])
                 else:
-                    action = np.hstack([qpos, self.gripper_state])
+                    qpos = result_group[0]["position"][min(step, n_step - 1)]
+                    action = np.asarray(qpos).reshape(1, -1)
                 obs, reward, terminated, truncated, info = self.env.step(action)
-            else:
-                action_dict = dict()
-                for id in range(self.agent_num):
-                    if id not in move_id:
-                        qpos = self.robot[id].get_qpos()[0, :-2].cpu().numpy()
-                        if self.control_mode == "pd_joint_pos":
-                            action = np.hstack([qpos, self.gripper_state[id]])
+
+            else:  # multi-agent
+                action_dict = {}
+                for aid in range(self.agent_num):
+                    if self.control_mode == "pd_ee_pose":
+                        if aid not in move_id:
+                            ee_pose_arr = self.get_current_ee_pose_array(agent_id=aid)
+                            action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[aid])
                         else:
-                            action = np.hstack([qpos, qpos * 0, self.gripper_state[id]])
-                        action_dict[f"panda-{id}"] = action
+                            ee_traj = planned_ee_trajectories[aid]
+                            idx = min(step, len(ee_traj) - 1)
+                            target_ee_pose = ee_traj[idx]
+                            action = self.get_ee_action_from_pose(target_ee_pose, self.gripper_state[aid])
                     else:
-                        move_idx = move_id.index(id)
-                        self_step = result_group[move_idx]["position"].shape[0]
-                        qpos = result_group[move_idx]["position"][min(i, self_step - 1)]
-                        if self.control_mode == "pd_joint_pos_vel":
-                            qvel = result_group[move_idx]["velocity"][min(i, self_step - 1)]
-                            action = np.hstack([qpos, qvel, self.gripper_state[id]])
+                        if aid not in move_id:
+                            qpos = self.robot[aid].get_qpos()[0, :-2].cpu().numpy()
+                            action = np.asarray(qpos).reshape(1, -1)
                         else:
-                            action = np.hstack([qpos, self.gripper_state[id]])
-                        action_dict[f"panda-{id}"] = action
+                            move_idx = move_id.index(aid)
+                            total = result_group[move_idx]["position"].shape[0]
+                            qpos = result_group[move_idx]["position"][min(step, total - 1)]
+                            action = np.asarray(qpos).reshape(1, -1)
+                    action_dict[f"panda-{aid}"] = action
                 obs, reward, terminated, truncated, info = self.env.step(action_dict)
+
             self.elapsed_steps += 1
             if self.print_env_info:
-                print(
-                    f"[{self.elapsed_steps:3}] Env Output: reward={reward} info={info}"
-                )
+                print(f"[{self.elapsed_steps:3}] Env Output: reward={reward} info={info}")
             if self.vis:
                 self.base_env.render_human()
         return True, obs, reward, terminated, truncated, info
@@ -160,16 +240,12 @@ class PandaArmMotionPlanningSolver:
         result_group = []
         for id in range(len(pose)):
             planner_id = move_id[id]
-            # print("planner_id", planner_id, "pose:", pose[id])
             result = self.planner[planner_id].plan_screw(
                 np.concatenate([pose[id].p, pose[id].q]),
                 self.robot[planner_id].get_qpos().cpu().numpy()[0],
                 time_step=self.base_env.control_timestep,
                 use_point_cloud=self.use_point_cloud,
             )
-            # self.robot[planner_id].set_qpos([-0.0496536, 1.11766171, 0.02375544, -1.74971247, -0.00812339, 4.43305492, 0.8032164, 0.04, 0.04])
-            # while True:
-            #    self.base_env.render_human()
             if result["status"] != "Success":
                 result = self.planner[planner_id].plan_screw(
                     np.concatenate([pose[id].p, pose[id].q]),
@@ -186,70 +262,69 @@ class PandaArmMotionPlanningSolver:
                 return result
             result_group.append(result)
         return self.follow_path(result_group, move_id, refine_steps=refine_steps)
-    
+
     def open_gripper(self, open_id: Union[int, List[int]] = 0):
-        open_id = [open_id, ] if not isinstance(open_id, list) else open_id
-        for i in range(20):
+        ids = [open_id] if not isinstance(open_id, list) else open_id
+        for aid in ids:
+            self.gripper_state[aid] = OPEN
+
+        for _ in range(20):
             if not self.is_multi_agent:
-                self.gripper_state[0] = min(self.gripper_state[0] + 0.1, OPEN)
-                qpos = self.robot[0].get_qpos()[0, :-2].cpu().numpy()
-                if self.control_mode == "pd_joint_pos":
-                    action = np.hstack([qpos, self.gripper_state[0]])
+                if self.control_mode == "pd_ee_pose":
+                    ee_pose_arr = self.get_current_ee_pose_array(agent_id=0) 
+                    action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[0])
                 else:
-                    action = np.hstack([qpos, qpos * 0, self.gripper_state[0]])
+                    qpos = self.robot[0].get_qpos()[0, :-2].cpu().numpy()
+                    action = np.asarray(qpos).reshape(1, -1)
                 obs, reward, terminated, truncated, info = self.env.step(action)
             else:
-                action_dict = dict()
-                for id in range(self.agent_num):
-                    qpos = self.robot[id].get_qpos()[0, :-2].cpu().numpy()
-                    if self.control_mode == "pd_joint_pos":
-                        action = np.hstack([qpos, self.gripper_state[id]])
+                action_dict = {}
+                for aid in range(self.agent_num):
+                    if self.control_mode == "pd_ee_pose":
+                        ee_pose_arr = self.get_current_ee_pose_array(agent_id=aid)
+                        action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[aid])
                     else:
-                        action = np.hstack([qpos, qpos * 0, self.gripper_state[id]])
-                    if id in open_id:
-                        self.gripper_state[id] = min(self.gripper_state[id] + 0.1, OPEN)
-                        action[-1] = self.gripper_state[id]
-                    action_dict[f"panda-{id}"] = action
+                        qpos = self.robot[aid].get_qpos()[0, :-2].cpu().numpy()
+                        action = np.asarray(qpos).reshape(1, -1)
+                    action_dict[f"panda-{aid}"] = action
                 obs, reward, terminated, truncated, info = self.env.step(action_dict)
+
             self.elapsed_steps += 1
             if self.print_env_info:
-                print(
-                    f"[{self.elapsed_steps:3}] Env Output: reward={reward} info={info}"
-                )
+                print(f"[{self.elapsed_steps:3}] Open gripper step: reward={reward} info={info}")
             if self.vis:
                 self.base_env.render_human()
         return obs, reward, terminated, truncated, info
 
     def close_gripper(self, close_id: Union[int, List[int]] = 0):
-        close_id = [close_id, ] if not isinstance(close_id, list) else close_id
-        # use step-by-step close
-        for i in range(20):
+        ids = [close_id] if not isinstance(close_id, list) else close_id
+        for aid in ids:
+            self.gripper_state[aid] = CLOSED
+
+        for _ in range(20):
             if not self.is_multi_agent:
-                self.gripper_state[0] = max(self.gripper_state[0] - 0.1, CLOSED)
-                qpos = self.robot[0].get_qpos()[0, :-2].cpu().numpy()
-                if self.control_mode == "pd_joint_pos":
-                    action = np.hstack([qpos, self.gripper_state[0]])
+                if self.control_mode == "pd_ee_pose":
+                    ee_pose_arr = self.get_current_ee_pose_array(agent_id=0)
+                    action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[0])
                 else:
-                    action = np.hstack([qpos, qpos * 0, self.gripper_state[0]])
+                    qpos = self.robot[0].get_qpos()[0, :-2].cpu().numpy()
+                    action = np.asarray(qpos).reshape(1, -1)
                 obs, reward, terminated, truncated, info = self.env.step(action)
             else:
-                action_dict = dict()
-                for id in range(self.agent_num):
-                    qpos = self.robot[id].get_qpos()[0, :-2].cpu().numpy()
-                    if self.control_mode == "pd_joint_pos":
-                        action = np.hstack([qpos, self.gripper_state[id]])
+                action_dict = {}
+                for aid in range(self.agent_num):
+                    if self.control_mode == "pd_ee_pose":
+                        ee_pose_arr = self.get_current_ee_pose_array(agent_id=aid)
+                        action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[aid])
                     else:
-                        action = np.hstack([qpos, qpos * 0, self.gripper_state[id]])
-                    if id in close_id:
-                        self.gripper_state[id] = max(self.gripper_state[id] - 0.1, CLOSED)
-                        action[-1] = self.gripper_state[id]
-                    action_dict[f"panda-{id}"] = action
+                        qpos = self.robot[aid].get_qpos()[0, :-2].cpu().numpy()
+                        action = np.asarray(qpos).reshape(1, -1)
+                    action_dict[f"panda-{aid}"] = action
                 obs, reward, terminated, truncated, info = self.env.step(action_dict)
+
             self.elapsed_steps += 1
             if self.print_env_info:
-                print(
-                    f"[{self.elapsed_steps:3}] Env Output: reward={reward} info={info}"
-                )
+                print(f"[{self.elapsed_steps:3}] Close gripper step: reward={reward} info={info}")
             if self.vis:
                 self.base_env.render_human()
         return obs, reward, terminated, truncated, info
