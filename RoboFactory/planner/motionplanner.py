@@ -106,7 +106,7 @@ class PandaArmMotionPlanningSolver:
             agent_id (int): The ID of the agent/planner to use for the conversion.
 
         Returns:
-            np.ndarray: The end-effector pose trajectory, shape (N, 7), where each row is [px, py, pz, qw, qx, qy, qz].
+            np.ndarray: The end-effector pose trajectory, shape (N, 6), where each row is [px, py, pz, roll, pitch, yaw].
         """
         planner = self.planner[agent_id]
         ee_trajectory = []
@@ -119,47 +119,22 @@ class PandaArmMotionPlanningSolver:
             pinocchio_model.compute_forward_kinematics(full_qpos)
             ee_pose_or_array = pinocchio_model.get_link_pose(move_group_link_id)
             if isinstance(ee_pose_or_array, sapien.Pose):
-                ee_pose_np = np.hstack([ee_pose_or_array.p, ee_pose_or_array.q])
+                pos = ee_pose_or_array.p
+                quat = ee_pose_or_array.q
             elif isinstance(ee_pose_or_array, np.ndarray):
-                ee_pose_np = ee_pose_or_array
+                pos = ee_pose_or_array[:3]
+                quat = ee_pose_or_array[3:]
             else:
                 raise TypeError(f"Unexpected type returned by get_link_pose: {type(ee_pose_or_array)}")
+            rpy = quat2euler(quat, axes='sxyz')
+            ee_pose_np = np.hstack([pos, rpy])  # [px, py, pz, roll, pitch, yaw]
             ee_trajectory.append(ee_pose_np)
-     
+
         return np.array(ee_trajectory)
-
-    def extract_pos_quat(self, sapien_pose):
-        pos_arr = np.asarray(sapien_pose.p)
-        pos = pos_arr[0] if pos_arr.ndim == 2 and pos_arr.shape[0] == 1 else pos_arr
-        quat_arr = np.asarray(sapien_pose.q)
-        quat_wxyz = quat_arr[0] if quat_arr.ndim == 2 and quat_arr.shape[0] == 1 else quat_arr
-        if quat_wxyz.shape[0] != 4:
-            raise ValueError(f"Expected quaternion of length 4, but got shape {quat_wxyz.shape}")
-        return pos, quat_wxyz
-
-    def get_ee_action_from_pose(self, pose: Union[np.ndarray, sapien.Pose], gripper_state: int) -> np.ndarray:
-        """
-        Converts a pose (and gripper state) into the required format for the 'ee_pose' controller.
-        
-        Args:
-            pose: A 7D numpy array [px,py,pz,qw,qx,qy,qz] or a sapien.Pose object.
-            gripper_state: The desired gripper state (OPEN or CLOSED).
-            
-        Returns:
-            A (1, 7) numpy array for the environment step function: [px,py,pz,roll,pitch,yaw,gripper].
-        """
-        if isinstance(pose, sapien.Pose):
-            pos, quat_wxyz = self.extract_pos_quat(pose)
-        else: # Assumes np.ndarray of shape (7,)
-            pos = pose[:3]
-            quat_wxyz = pose[3:7]
-        roll, pitch, yaw = quat2euler(quat_wxyz, axes='sxyz')
-        action_vec = np.hstack([pos, roll, pitch, yaw, gripper_state])
-        return action_vec.reshape(1, -1)
 
     def get_current_ee_pose_array(self, agent_id: int = 0) -> np.ndarray:
         """
-        From current robot joints pose, calculate EE pose: numpy array [px,py,pz,qw,qx,qy,qz]。
+        From current robot joints pose, calculate EE pose: numpy array [px,py,pz,qw,qx,qy,qz]
         """
         # get qpos
         full_qpos = self.robot[agent_id].get_qpos().cpu().numpy()[0]
@@ -187,8 +162,8 @@ class PandaArmMotionPlanningSolver:
                 if self.control_mode == "pd_ee_pose":
                     ee_traj = planned_ee_trajectories[agent_id]
                     idx = min(step, len(ee_traj) - 1)
-                    target_ee_pose = ee_traj[idx]  # 7-dim numpy array
-                    action = self.get_ee_action_from_pose(target_ee_pose, self.gripper_state[agent_id])
+                    target_ee_pose = ee_traj[idx]  # [px, py, pz, roll, pitch, yaw]
+                    action = np.hstack([target_ee_pose, self.gripper_state[agent_id]]).reshape(1, -1)  # Gripper state included
                 else:
                     qpos = result_group[0]["position"][min(step, n_step - 1)]
                     action = np.asarray(qpos).reshape(1, -1)
@@ -200,12 +175,12 @@ class PandaArmMotionPlanningSolver:
                     if self.control_mode == "pd_ee_pose":
                         if aid not in move_id:
                             ee_pose_arr = self.get_current_ee_pose_array(agent_id=aid)
-                            action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[aid])
+                            action = np.hstack([ee_pose_arr, self.gripper_state[aid]]).reshape(1, -1)  # Gripper state included
                         else:
                             ee_traj = planned_ee_trajectories[aid]
                             idx = min(step, len(ee_traj) - 1)
                             target_ee_pose = ee_traj[idx]
-                            action = self.get_ee_action_from_pose(target_ee_pose, self.gripper_state[aid])
+                            action = np.hstack([target_ee_pose, self.gripper_state[aid]]).reshape(1, -1)  # Gripper state included
                     else:
                         if aid not in move_id:
                             qpos = self.robot[aid].get_qpos()[0, :-2].cpu().numpy()
@@ -271,8 +246,8 @@ class PandaArmMotionPlanningSolver:
         for _ in range(20):
             if not self.is_multi_agent:
                 if self.control_mode == "pd_ee_pose":
-                    ee_pose_arr = self.get_current_ee_pose_array(agent_id=0) 
-                    action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[0])
+                    ee_pose_arr = self.get_current_ee_pose_array(agent_id=0)
+                    action = np.hstack([ee_pose_arr, self.gripper_state[0]]).reshape(1, -1)  # Gripper state included
                 else:
                     qpos = self.robot[0].get_qpos()[0, :-2].cpu().numpy()
                     action = np.asarray(qpos).reshape(1, -1)
@@ -282,7 +257,7 @@ class PandaArmMotionPlanningSolver:
                 for aid in range(self.agent_num):
                     if self.control_mode == "pd_ee_pose":
                         ee_pose_arr = self.get_current_ee_pose_array(agent_id=aid)
-                        action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[aid])
+                        action = np.hstack([ee_pose_arr, self.gripper_state[aid]]).reshape(1, -1)  # Gripper state included
                     else:
                         qpos = self.robot[aid].get_qpos()[0, :-2].cpu().numpy()
                         action = np.asarray(qpos).reshape(1, -1)
@@ -305,7 +280,7 @@ class PandaArmMotionPlanningSolver:
             if not self.is_multi_agent:
                 if self.control_mode == "pd_ee_pose":
                     ee_pose_arr = self.get_current_ee_pose_array(agent_id=0)
-                    action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[0])
+                    action = np.hstack([ee_pose_arr, self.gripper_state[0]]).reshape(1, -1)  # Gripper state included
                 else:
                     qpos = self.robot[0].get_qpos()[0, :-2].cpu().numpy()
                     action = np.asarray(qpos).reshape(1, -1)
@@ -315,7 +290,7 @@ class PandaArmMotionPlanningSolver:
                 for aid in range(self.agent_num):
                     if self.control_mode == "pd_ee_pose":
                         ee_pose_arr = self.get_current_ee_pose_array(agent_id=aid)
-                        action = self.get_ee_action_from_pose(ee_pose_arr, self.gripper_state[aid])
+                        action = np.hstack([ee_pose_arr, self.gripper_state[aid]]).reshape(1, -1)  # Gripper state included
                     else:
                         qpos = self.robot[aid].get_qpos()[0, :-2].cpu().numpy()
                         action = np.asarray(qpos).reshape(1, -1)
